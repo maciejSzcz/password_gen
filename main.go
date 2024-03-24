@@ -42,7 +42,70 @@ const (
 	SpecialChars = "~!@#$%^&*()_+-={}|[]:<>?,./"
 )
 
-func generatePassword(restrictions PasswordRestrictions, prefix string) (string, error) {
+func retryGeneratePassword(maxRetry int, restrictions PasswordRestrictions) (string, error) {
+	var password string
+	var err error
+	for i := 0; i < maxRetry; i++ {
+		password, err = generatePassword(restrictions)
+		if err == nil {
+			return password, nil
+		}
+	}
+	return password, err
+}
+
+func generatePassword(restrictions PasswordRestrictions) (string, error) {
+	var err error
+	password := ""
+	restrictedChars := ""
+
+	password, err = generatePasswordBase(restrictions, password)
+	if err != nil {
+		return "", err
+	}
+	if restrictions.MinLength > 0 {
+		password, err = padPasswordToLength(password, restrictions)
+		if err != nil {
+			return "", err
+		}
+	}
+	if restrictions.MaxLength > 0 {
+		password = slicePasswordToLength(password, restrictions)
+	}
+
+	if restrictions.MinSpecialChars > 0 {
+		password, err = fillPasswordWithCharacterGroup(password, restrictions.MinSpecialChars, SpecialChars, restrictions.MaxLength, &restrictedChars)
+
+		if err != nil {
+			return "", err
+		}
+	}
+	if restrictions.MinDigits > 0 {
+		password, err = fillPasswordWithCharacterGroup(password, restrictions.MinDigits, Digits, restrictions.MaxLength, &restrictedChars)
+
+		if err != nil {
+			return "", err
+		}
+		restrictedChars += Digits
+	}
+	if restrictions.MinLetters > 0 {
+		password, err = fillPasswordWithCharacterGroup(password, restrictions.MinLetters, Letters, restrictions.MaxLength, &restrictedChars)
+
+		if err != nil {
+			return "", err
+		}
+		restrictedChars += Letters
+	}
+	if restrictions.AllUpperCase {
+		password = strings.ToUpper(password)
+	}
+	if restrictions.AllLowerCase {
+		password = strings.ToLower(password)
+	}
+	return password, nil
+}
+
+func generatePasswordBase(restrictions PasswordRestrictions, prefix string) (string, error) {
 	if restrictions.UserReadable {
 		return generateUserReadablePassword(prefix)
 	} else {
@@ -96,7 +159,7 @@ func randomElement(s string) (string, error) {
 
 func padPasswordToLength(password string, restrictions PasswordRestrictions) (string, error) {
 	if len(password) < restrictions.MinLength {
-		generatedPassword, err := generatePassword(restrictions, password)
+		generatedPassword, err := generatePasswordBase(restrictions, password)
 		if err != nil {
 			return "", err
 		}
@@ -189,7 +252,6 @@ func handleError(w http.ResponseWriter, err error) {
 
 func handlePasswordGen(w http.ResponseWriter, r *http.Request) {
 	password := ""
-	restrictedChars := ""
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
 	restrictions, err := parseRestrictions(r.URL.Query())
@@ -199,55 +261,10 @@ func handlePasswordGen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	password, err = generatePassword(restrictions, password)
+	password, err = retryGeneratePassword(5, restrictions)
 	if err != nil {
 		handleError(w, err)
 		return
-	}
-	if restrictions.MinLength > 0 {
-		password, err = padPasswordToLength(password, restrictions)
-		if err != nil {
-			handleError(w, err)
-			return
-		}
-	}
-	if restrictions.MaxLength > 0 {
-		password = slicePasswordToLength(password, restrictions)
-	}
-
-	if restrictions.MinSpecialChars > 0 {
-		password, err = fillPasswordWithCharacterGroup(password, restrictions.MinSpecialChars, SpecialChars, restrictions.MaxLength, &restrictedChars)
-		fmt.Println(restrictedChars)
-		if err != nil {
-			handleError(w, err)
-			return
-		}
-	}
-	if restrictions.MinDigits > 0 {
-		password, err = fillPasswordWithCharacterGroup(password, restrictions.MinDigits, Digits, restrictions.MaxLength, &restrictedChars)
-		fmt.Println(restrictedChars)
-
-		if err != nil {
-			handleError(w, err)
-			return
-		}
-		restrictedChars += Digits
-	}
-	if restrictions.MinLetters > 0 {
-		password, err = fillPasswordWithCharacterGroup(password, restrictions.MinLetters, Letters, restrictions.MaxLength, &restrictedChars)
-		fmt.Println(restrictedChars)
-
-		if err != nil {
-			handleError(w, err)
-			return
-		}
-		restrictedChars += Letters
-	}
-	if restrictions.AllUpperCase {
-		password = strings.ToUpper(password)
-	}
-	if restrictions.AllLowerCase {
-		password = strings.ToLower(password)
 	}
 	encoder.Encode(Response{Error: "", Password: password})
 }
